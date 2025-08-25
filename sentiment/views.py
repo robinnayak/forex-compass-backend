@@ -50,141 +50,103 @@ class SentimentAnalysisView(View):
         # Use symbol from URL
         if not symbol:
             return JsonResponse({'error': 'Symbol is required.'}, status=400)
-        return JsonResponse({
-            "message": f"Send a POST request to analyze sentiment for symbol: {symbol}",
-            "available_parameters": {
-                "symbol": "Currency pair (e.g., EURUSD, GBPUSD)",
-                "include_reddit": "boolean (default: true)",
-                "include_news": "boolean (default: true)",
-                "analyze_sentiment": "boolean (default: true)",
-                "ai_model": "string (default: gemma3:latest)",
-                "max_items": "integer (default: 20 per source)"
-            },
-            "supported_symbols": ["EURUSD", "USDJPY", "GBPUSD", "USDCHF", "AUDUSD", "USDCAD", "NZDUSD"],
-            "symbol": symbol
-        })
-
-    def post(self, request, symbol=None):
-        try:
-            # Parse JSON data
-            try:
-                data = json.loads(request.body)
-            except json.JSONDecodeError:
-                data = {}
-            # Use symbol from URL if not in body
-            if not symbol:
-                symbol = data.get('symbol')
-            if not symbol:
-                return JsonResponse({'error': 'Symbol is required.'}, status=400)
-            # Get optional parameters
-            include_reddit = data.get('include_reddit', True)
-            include_news = data.get('include_news', True)
-            analyze_sentiment = data.get('analyze_sentiment', True)
-            max_items = data.get('max_items', 20)
-            # Standardize the symbol
-            standardized_symbol = standardize_currency_pair(symbol)
-            if not standardized_symbol:
-                return JsonResponse({'error': f'Invalid currency pair: {symbol}'}, status=400)
-            # Load metadata
-            metadata = load_symbol_metadata(standardized_symbol.replace("/", ""))
-            if not metadata:
-                metadata = {
-                    "keywords": [standardized_symbol],
-                    "subs": ["Forex", "investing", "economics"],
-                    "category": "forex"
-                }
-            logger.info(f"Processing symbol: {standardized_symbol}")
-            logger.info(f"Include Reddit: {include_reddit}, Include News: {include_news}, Analyze Sentiment: {analyze_sentiment}")
-            reddit_data = []
-            news_data = []
-            analyses = []
-            # Fetch Reddit posts if enabled
-            if include_reddit:
-                try:
-                    reddit_data = fetch_reddit_posts(standardized_symbol, metadata)
-                    if isinstance(reddit_data, dict) and 'error' in reddit_data:
-                        logger.warning(f"Reddit fetch error: {reddit_data['error']}")
-                        reddit_data = []
-                    else:
-                        reddit_data = reddit_data[:max_items]
-                        logger.info(f"Reddit posts found: {len(reddit_data)}")
-                        if analyze_sentiment and reddit_data:
-                            reddit_analysis = ai_analyzer.analyze_sentiment(
-                                reddit_data, standardized_symbol, "reddit"
-                            )
-                            reddit_analysis['source_type'] = 'reddit'
-                            analyses.append(reddit_analysis)
-                except Exception as e:
-                    logger.error(f"Error fetching Reddit posts: {e}")
-                    reddit_data = []
-            # Fetch news items if enabled
-            if include_news:
-                try:
-                    category = metadata.get('category', 'forex')
-                    news_fetcher = NewsFetcher()
-                    news_data = news_fetcher.fetch_news_feeds(standardized_symbol, category)
-                    news_data = news_data[:max_items]
-                    logger.info(f"News items found: {len(news_data)}")
-                    if analyze_sentiment and news_data:
-                        news_analysis = ai_analyzer.analyze_sentiment(
-                            news_data, standardized_symbol, "news"
-                        )
-                        news_analysis['source_type'] = 'news'
-                        analyses.append(news_analysis)
-                except Exception as e:
-                    logger.error(f"Error fetching news: {e}")
-                    news_data = []
-            # Prepare response data
-            response_data = {
-                "symbol": standardized_symbol,
-                "metadata": metadata,
-                "sources": {
-                    "reddit": {
-                        "enabled": include_reddit,
-                        "items_found": len(reddit_data),
-                        "items": reddit_data[:10]  # Return only first 10 items for response
-                    },
-                    "news": {
-                        "enabled": include_news,
-                        "items_found": len(news_data),
-                        "items": news_data[:10]  # Return only first 10 items for response
-                    }
-                },
-                "total_items": len(reddit_data) + len(news_data),
-                "timestamp": datetime.now().isoformat()
+        # Get optional parameters from query string
+        include_reddit = request.GET.get('include_reddit', 'true').lower() == 'true'
+        include_news = request.GET.get('include_news', 'true').lower() == 'true'
+        analyze_sentiment = request.GET.get('analyze_sentiment', 'true').lower() == 'true'
+        max_items = int(request.GET.get('max_items', 20))
+        # Standardize the symbol
+        standardized_symbol = standardize_currency_pair(symbol)
+        if not standardized_symbol:
+            return JsonResponse({'error': f'Invalid currency pair: {symbol}'}, status=400)
+        # Load metadata
+        metadata = load_symbol_metadata(standardized_symbol.replace("/", ""))
+        if not metadata:
+            metadata = {
+                "keywords": [standardized_symbol],
+                "subs": ["Forex", "investing", "economics"],
+                "category": "forex"
             }
-            
-            # Perform sentiment analysis aggregation if requested
-            if analyze_sentiment:
-                try:
-                    if analyses:
-                        final_analysis = analysis_aggregator.aggregate_analyses(analyses)
-                        response_data["sentiment_analysis"] = final_analysis
-                        logger.info("Sentiment analysis completed successfully")
-                    else:
-                        response_data["sentiment_analysis"] = {
-                            "error": "No data available for analysis",
-                            "symbol": standardized_symbol,
-                            "status": "no_data"
-                        }
-                except Exception as e:
-                    logger.error(f"Error in sentiment analysis: {e}")
+        logger.info(f"Processing symbol: {standardized_symbol}")
+        logger.info(f"Include Reddit: {include_reddit}, Include News: {include_news}, Analyze Sentiment: {analyze_sentiment}")
+        reddit_data = []
+        news_data = []
+        analyses = []
+        # Fetch Reddit posts if enabled
+        if include_reddit:
+            try:
+                reddit_data = fetch_reddit_posts(standardized_symbol, metadata)
+                if isinstance(reddit_data, dict) and 'error' in reddit_data:
+                    logger.warning(f"Reddit fetch error: {reddit_data['error']}")
+                    reddit_data = []
+                else:
+                    reddit_data = reddit_data[:max_items]
+                    logger.info(f"Reddit posts found: {len(reddit_data)}")
+                    if analyze_sentiment and reddit_data:
+                        reddit_analysis = ai_analyzer.analyze_sentiment(
+                            reddit_data, standardized_symbol, "reddit"
+                        )
+                        reddit_analysis['source_type'] = 'reddit'
+                        analyses.append(reddit_analysis)
+            except Exception as e:
+                logger.error(f"Error fetching Reddit posts: {e}")
+                reddit_data = []
+        # Fetch news items if enabled
+        if include_news:
+            try:
+                category = metadata.get('category', 'forex')
+                news_fetcher = NewsFetcher()
+                news_data = news_fetcher.fetch_news_feeds(standardized_symbol, category)
+                news_data = news_data[:max_items]
+                logger.info(f"News items found: {len(news_data)}")
+                if analyze_sentiment and news_data:
+                    news_analysis = ai_analyzer.analyze_sentiment(
+                        news_data, standardized_symbol, "news"
+                    )
+                    news_analysis['source_type'] = 'news'
+                    analyses.append(news_analysis)
+            except Exception as e:
+                logger.error(f"Error fetching news: {e}")
+                news_data = []
+        response_data = {
+            "symbol": standardized_symbol,
+            "metadata": metadata,
+            "sources": {
+                "reddit": {
+                    "enabled": include_reddit,
+                    "items_found": len(reddit_data),
+                    "items": reddit_data[:10]
+                },
+                "news": {
+                    "enabled": include_news,
+                    "items_found": len(news_data),
+                    "items": news_data[:10]
+                }
+            },
+            "total_items": len(reddit_data) + len(news_data),
+            "timestamp": datetime.now().isoformat()
+        }
+        if analyze_sentiment:
+            try:
+                if analyses:
+                    final_analysis = analysis_aggregator.aggregate_analyses(analyses)
+                    response_data["sentiment_analysis"] = final_analysis
+                    logger.info("Sentiment analysis completed successfully")
+                else:
                     response_data["sentiment_analysis"] = {
-                        "error": str(e),
+                        "error": "No data available for analysis",
                         "symbol": standardized_symbol,
-                        "status": "analysis_failed"
+                        "status": "no_data"
                     }
+            except Exception as e:
+                logger.error(f"Error in sentiment analysis: {e}")
+                response_data["sentiment_analysis"] = {
+                    "error": str(e),
+                    "symbol": standardized_symbol,
+                    "status": "analysis_failed"
+                }
+        return JsonResponse(response_data, safe=False)
             
-            return JsonResponse(response_data, safe=False)
-            
-        except Exception as e:
-            logger.error(f"Error in sentiment analysis view: {e}")
-            return JsonResponse({
-                'error': 'Internal server error',
-                'message': str(e),
-                'timestamp': datetime.now().isoformat()
-            }, status=500)
-
 class HealthCheckView(View):
     def get(self, request):
         # Test Ollama connection
